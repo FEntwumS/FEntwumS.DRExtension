@@ -25,7 +25,7 @@ public static partial class SvnrAssembler
             sourceLine++;
 
             var line = rawLine.Trim();
-            if (line.Length == 0 || line[0] == '#' || line[0] == ';') continue;
+            if (line.Length == 0 || line[0] == '#' || line[0] == ';') continue; // Reine Kommentarzeilen nicht verarbeiten
 
             if (line.Equals(SuppressGapWarningDirective, StringComparison.OrdinalIgnoreCase))
             {
@@ -93,7 +93,8 @@ public static partial class SvnrAssembler
     // Steht keines, greift das Backtracking - "DEC00" faellt auf die Befehlsvariante
     // zurueck, weil nach den vier Zeichen "DEC0" noch eine "0" uebrig bliebe. ADD und DEC
     // sind die einzigen Mnemoniken, die ausschliesslich aus Hexbuchstaben bestehen.
-    [GeneratedRegex(
-        @"^(?<address>[0-9A-Fa-f]{1,4}):\s*(?:(?<data>[0-9A-Fa-f]{4})|(?<opcode>[A-Za-z]{2,4})\s*(?<operand>[0-9A-Fa-f]{2}))\s*(?:[;#]\s*(?<comment>.*))?$")]
+    
+    //https://regex101.com/r/zJlScb/1
+    [GeneratedRegex(@"^(?<address>[0-9A-Fa-f]{1,4}):\s*(?:(?<data>[0-9A-Fa-f]{4})|(?<opcode>[A-Za-z]{2,4})\s*(?<operand>[0-9A-Fa-f]{2}))\s*(?:[;#]\s*(?<comment>.*))?$")]
     private static partial Regex LinePattern();
 }
