@@ -12,3 +12,9 @@ riderModule.iml
 
 # Lokale Notizen, nicht auschecken
 *.local.md
+
+# Lokale Ueberbrueckung gegen unveroeffentlichte Vertraege, nie einchecken
+NuGet.config
+Directory.Build.targets
+local-nuget/
+*.nupkg
