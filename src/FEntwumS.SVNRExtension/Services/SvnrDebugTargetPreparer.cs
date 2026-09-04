@@ -1,7 +1,10 @@
 using System.Net.Sockets;
+using System.Xml;
+using System.Xml.Linq;
 using Avalonia.Media;
 using FEntwumS.SVNRExtension.Asm.Entities; 
-using FEntwumS.SVNRExtension.Sbdp; 
+using FEntwumS.SVNRExtension.Sbdp;
+using FEntwumS.SVNRExtension.Sbdp.Constants;
 using FEntwumS.SVNRExtension.Tools; 
 using Microsoft.Extensions.Logging;
 using OneWare.Essentials.Debugger.Entities;
@@ -11,11 +14,12 @@ using OneWare.UniversalFpgaProjectSystem.Models;
 
 namespace FEntwumS.SVNRExtension.Services;
 
-public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
+public sealed class SvnrDebugTargetPreparer : IDebugTargetPreparer
 {
-    private const string GdbAdapterId = "gdb";
+    private const string GdbBackendId = "gdb_server";
     
-    public string DisplayName => "SVNR (on-chip)";
+    public string DisplayName => "SVNRDebugPreparer";
+    
 
     private readonly SvnrDebugBuildService _buildService;
     private readonly RemoteStubService _stubService;
@@ -24,7 +28,7 @@ public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
     private readonly IOutputService _outputService;
     private readonly ILogger _logger;
 
-    public SvnrDebugLaunchProvider(
+    public SvnrDebugTargetPreparer(
         SvnrDebugBuildService buildService,
         RemoteStubService stubService,
         ISettingsService settingsService,
@@ -40,32 +44,26 @@ public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
         _logger = logger;
     }
 
- 
-
-    private UniversalFpgaProjectRoot? ActiveSvnrProject =>
-        _projectExplorerService.ActiveProject as UniversalFpgaProjectRoot;
-
+    private UniversalFpgaProjectRoot? ActiveProject => _projectExplorerService.ActiveProject as UniversalFpgaProjectRoot;
    
-    public bool CanPrepare()
-    {
-        return ActiveSvnrProject is { } project && SvnrSettingsHelper.IsSvnrKit(project);
-    }
+    //Wenn aktives Projekt UniveralFpga und DebugKit = SVNR in JSON
+    public bool CanPrepare() { return ActiveProject is { } project && SvnrSettingsHelper.IsSvnrKit(project); }
 
     // Wenn man den über den Käfer den Workflow anstößt, wir erstmal die Async Methode zur Vorbereitung des Stubs angestoßen.
-    public async Task<DebugLaunchRequest?> PrepareAsync(CancellationToken ct = default)
+    public async Task<DebugLaunchRequest?> PrepareAsync()
     {
-        if (ActiveSvnrProject is not { } project) // Checken ob man in einem FPGA Projekt ist. 
+        if (ActiveProject is not { } project) // Checken ob man in einem FPGA Projekt ist. 
         {
             _outputService.WriteLine("Kein FPGA-Projekt aktiv.", Brushes.Red);
             return null;
         }
 
         var assemblerFile = SvnrSettingsHelper.GetAsmFile(project); // Assembler Quelldatei nehmen, auf der "der Cursor" ist. 
+        
         if (assemblerFile == "none") // Wenn keine Assemblerdatei 
         {
             _outputService.WriteLine(
-                "Keine .asm-Datei registriert. Im Explorer die Datei waehlen und " +
-                "'Use this file to Compile' aufrufen.", Brushes.Red);
+                "No *.asm-File registered to compile. Choose File in project Tree and call 'Use this file to Compile'.", Brushes.Red);
             return null;
         }
 
@@ -86,15 +84,12 @@ public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
         {
             // Bei jedem Start neu assemblieren: nur so koennen Zeilentabelle und Quelltext nicht
             // auseinanderlaufen, und der Debugger haelt nicht stillschweigend an der falschen Stelle.
-            _outputService.WriteLine($"Assembliere {assemblerFile}...");
+            _outputService.WriteLine($"Assemble {assemblerFile}...");
             var artifacts = _buildService.Build(assemblerPath, project.FullPath);
             ReportDiagnostics(artifacts.Diagnostics);
 
-            WriteGdbCommandFile(artifacts.ElfPath);
 
-            ct.ThrowIfCancellationRequested();
-
-            _outputService.WriteLine("Suche den SVNR...");
+            _outputService.WriteLine("Detect SVNR...");
             var transport = SvnrPortLocator.Open(
                 _settingsService.GetSettingValue<string>(FEntwumsSvnrExtensionModule.SerialPortSetting));
 
@@ -105,10 +100,9 @@ public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
             var port = _stubService.Start(transport, configuredPort);
             _outputService.WriteLine($"Stub laeuft auf localhost:{port}.");
 
-            ct.ThrowIfCancellationRequested();
 
             _outputService.WriteLine("Lade das Programm auf den SVNR...");
-            _stubService.LoadProgram(await File.ReadAllBytesAsync(artifacts.BinaryPath, ct));
+            _stubService.LoadProgram(await File.ReadAllBytesAsync(artifacts.BinaryPath));
 
             var endpoint = $"localhost:{port}";
 
@@ -118,7 +112,8 @@ public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
             if (configuredPort == 0)
                 _settingsService.SetSettingValue(FEntwumsSvnrExtensionModule.RemoteEndpointSetting, endpoint);
 
-            return new DebugLaunchRequest(GdbAdapterId, artifacts.ElfPath, endpoint, project.FullPath);
+            return new DebugLaunchRequest(GdbBackendId, artifacts.ElfPath, endpoint, project.FullPath,
+                CreateInitCommands(), CreateSVNRProfile());
         }
         catch (SocketException exception)
         {
@@ -127,11 +122,6 @@ public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
             var subject = configuredPort == 0 ? "Kein freier Port" : $"Port {configuredPort}";
             _outputService.WriteLine($"{subject} laesst sich nicht belegen: {exception.Message}", Brushes.Red);
             _logger.Error(exception.Message, exception);
-            return null;
-        }
-        catch (OperationCanceledException)
-        {
-            _outputService.WriteLine("Vorbereitung abgebrochen.");
             return null;
         }
         catch (Exception exception)
@@ -143,27 +133,6 @@ public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
             return null;
         }
     }
-
-   // Darf hier nicht liegen, weil es SVNR spezifisch ist. 
-    private static void WriteGdbCommandFile(string elfPath)
-    {
-        string[] commands =
-        [
-            "set architecture m68k",
-            $"set tdesc filename {ToGdbPath(RemoteStubService.TargetDescriptionPath())}",
-            $"symbol-file {ToGdbPath(elfPath)}",
-        ];
-
-        File.WriteAllText(Path.ChangeExtension(elfPath, ".gdbinit"),
-            string.Join(Environment.NewLine, commands) + Environment.NewLine);
-    }
-    
-    
-    private static string ToGdbPath(string path) // Vorwaertsschraegstriche, weil GDB Backslashes in Pfaden als Escape
-    {
-        return path.Replace(Path.DirectorySeparatorChar, '/');
-    }
-
     
     private static bool TryReadConfiguredPort(string? endpoint, out int port, out string rejection)
     {
@@ -171,10 +140,9 @@ public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
         rejection = string.Empty;
 
         var value = endpoint?.Trim() ?? string.Empty;
-        if (value.Length == 0) return true;
+        if (value.Length == 0)
+            return true;
 
-        // Von hinten getrennt, damit auch "[::1]:3333" richtig zerfaellt. Ohne Doppelpunkt gilt
-        // die Eingabe als blosse Portnummer - so tippt es, wer nur den Port festlegen will.
         var separator = value.LastIndexOf(':');
         var host = separator < 0 ? string.Empty : value[..separator].Trim();
         var portText = separator < 0 ? value : value[(separator + 1)..].Trim();
@@ -182,24 +150,21 @@ public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
         if (!int.TryParse(portText, out port) || port is < 0 or > 65535)
         {
             port = 0;
-            rejection = $"Remote Endpoint '{value}': '{portText}' ist keine Portnummer. " +
-                        "Erwartet wird host:port, etwa localhost:3333.";
+            rejection = $"Ungültiger Port: {portText}";
             return false;
         }
 
-        if (IsLoopback(host)) return true;
+        if (IsLoopback(host))
+            return true;
 
         port = 0;
-        rejection = $"Remote Endpoint '{value}': Der Stub lauscht nur auf diesem Rechner. " +
-                    "Als Host sind localhost oder 127.0.0.1 moeglich, sonst nichts.";
+        rejection = $"Ungültiger Host: {host}";
         return false;
     }
 
     private static bool IsLoopback(string host)
     {
-        return host.Length == 0
-               || host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-               || host is "127.0.0.1" or "::1" or "[::1]";
+        return host.Length == 0 || host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || host is "127.0.0.1" or "::1" or "[::1]";
     }
 
     /// <summary>
@@ -224,6 +189,66 @@ public sealed class SvnrDebugLaunchProvider : IDebugLaunchProvider
         {
             var colour = diagnostic.Severity == AssemblySeverity.Error ? Brushes.Red : Brushes.Yellow;
             _outputService.WriteLine(diagnostic.ToString(), colour);
+        }
+    }
+    
+    private string[] CreateInitCommands()
+    {
+        return
+        [
+            "set architecture m68k", // Für Motorola 
+            $"set tdesc filename {NormalizePath(RemoteStubService.TargetDescriptionPath())}",
+        ];
+    }
+    
+    private DebugTargetProfile CreateSVNRProfile()
+    {
+        return new DebugTargetProfile
+        {
+            AddressableUnitBytes = 2,
+            Registers = SvnrRegisters(),
+            MaxBreakpoints = SbdpConstants.MaxBreakpoints,
+            HasCallStack = false,
+            AddressWatermark = "Wortadresse im SVNR-RAM, z. B. 0x0 - 0x3FF"
+        };
+    }
+    
+    private static string NormalizePath(string path)
+    {
+        return path.Replace(Path.DirectorySeparatorChar, '/');
+    }
+    
+
+    private IReadOnlyList<string>? SvnrRegisters()
+    {
+        try
+        {
+            var settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Ignore
+            };
+
+            using var reader = XmlReader.Create(
+                RemoteStubService.TargetDescriptionPath(),
+                settings);
+
+            var document = XDocument.Load(reader);
+
+            return document
+                .Descendants("reg")
+                .Where(reg => string.Equals(
+                    (string?)reg.Attribute("group"),
+                    "SVNR",
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(reg => (string?)reg.Attribute("name"))
+                .OfType<string>()
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .ToList();
+        }
+        catch (Exception exception)
+        {
+            _logger.Error(exception.Message, exception);
+            return null;
         }
     }
 }

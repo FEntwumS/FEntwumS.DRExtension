@@ -46,7 +46,7 @@ public class FEntwumsSvnrExtensionModule : OneWareModuleBase
     {
         services.AddSingleton<SvnrDebugBuildService>();
         services.AddSingleton<RemoteStubService>();
-        services.AddSingleton<SvnrDebugLaunchProvider>();
+        services.AddSingleton<SvnrDebugTargetPreparer>();
     }
 
     public override void Initialize(IServiceProvider serviceProvider)
@@ -65,13 +65,13 @@ public class FEntwumsSvnrExtensionModule : OneWareModuleBase
 
         // Der Debug-Einstieg ist der generische Knopf im Debug-Panel des Kerns. Diese Erweiterung
         // bringt dafuer keinen eigenen Knopf mit, sondern nur den Vorbereiter, den der Kern fragt.
-        serviceProvider.Resolve<IDebuggerService>().RegisterLaunchProvider<SvnrDebugLaunchProvider>();
+        serviceProvider.Resolve<IDebuggerService>().RegisterTargetPreparer<SvnrDebugTargetPreparer>();
 
 
         fpgaService.RegisterLanguage("ASM", SupportedExtensions);
         var languageManager = serviceProvider.Resolve<ILanguageManager>();
 
-        languageManager.RegisterTextMateLanguage("asm", "avares:// FEntwumS.SVNRExtension/Assets/asm.tmLanguage.json",
+        languageManager.RegisterTextMateLanguage("asm", "avares://FEntwumS.SVNRExtension/Assets/asm.tmLanguage.json",
             SupportedExtensions);
 
         // Die Grammatik faerbt nur ein. Erst die TypeAssistance macht .asm zu einer Sprache, die
@@ -85,7 +85,7 @@ public class FEntwumsSvnrExtensionModule : OneWareModuleBase
             {
                 // Nicht mehr an der Toolchain festgemacht -> das Registrieren gehoert zum Debuggen,
                 // und das soll auch dann gehen, wenn niemand synthetisiert. Dieselbe
-                // Begruendung wie in SvnrDebugLaunchProvider.CanPrepare. Kriterium ist die
+                // Begruendung wie in SvnrDebugTargetPreparer.CanPrepare. Kriterium ist die
                 // Dateiendung, die oben schon geprueft ist.
                 if (file.Root is UniversalFpgaProjectRoot universalFpgaProjectRoot &&
                     SvnrSettingsHelper.GetAsmFile(universalFpgaProjectRoot) != file.RelativePath)
