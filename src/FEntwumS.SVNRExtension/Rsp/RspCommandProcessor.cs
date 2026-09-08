@@ -12,13 +12,24 @@ public sealed class RspCommandProcessor(
     Func<bool> interruptRequested,
     Action<string>? reportFault = null)
 {
+    // GDB Remote Serial Protocol capabilities advertised by this debug server.
+    // PacketSize=1000: Maximum size of a packet the server accepts.
+    // qXfer:features:read+: Supports reading target description XML via qXfer.
+    // hwbreak+: Supports hardware breakpoints.
+    // swbreak-: Does not support software breakpoints.
+    // multiprocess-: Does not support debugging multiple processes.
+    // error-message+: Supports human-readable error messages in responses.
     private const string SupportedFeatures =
-        "PacketSize=1000;qXfer:features:read+;hwbreak+;swbreak-;multiprocess-";
+        "PacketSize=1000;qXfer:features:read+;hwbreak+;swbreak-;multiprocess-;error-message+";
 
     private const string TargetDescriptionPrefix = "qXfer:features:read:";
+    
     private const int BytesPerWord = 2;
 
-    private static readonly TimeSpan RunPollInterval = TimeSpan.FromMilliseconds(50);
+    // Pollen ist Pflicht, kein Notbehelf: decoder.vhd setzt o_tx_trig nur in Zweigen, die durch
+    // ein empfangenes Paket bewacht sind - ein Breakpoint-Treffer meldet sich also nie von selbst.
+    // Waehrend z_DEBUG_RUNNING nimmt die Hardware ausserdem nur RequestState und Halt an.
+    private static readonly TimeSpan RunPollInterval = TimeSpan.FromMilliseconds(300);
 
     public string Process(string command)
     {
@@ -26,12 +37,19 @@ public sealed class RspCommandProcessor(
         {
             return Dispatch(command);
         }
-        catch (Exception exception) when (exception is SbdpException or FormatException
-                                              or ArgumentException or IndexOutOfRangeException)
+        catch (SbdpException exception)
         {
-            // GDB bekommt nur E01 - der Grund passt nicht ins Protokoll. Ohne diesen Weg nach
-            // aussen steht in der Debugger Console am Ende "Cannot access memory at address ...",
-            // und was die FPGA wirklich geantwortet hat, weiss niemand.
+            reportFault?.Invoke($"RSP '{command}': {exception.Message}");
+
+            var reason = exception.Received is { Type: SbdpType.Error, Error: SvnrError.NoSpace }
+                ? "breakpoint table full"
+                : "target rejected the request";
+
+            return $"E.{reason}";
+        }
+        catch (Exception exception) when (exception is FormatException or ArgumentException
+                                              or IndexOutOfRangeException)
+        {
             reportFault?.Invoke($"RSP '{command}': {exception.Message}");
             return RspResponse.GenericError;
         }
@@ -71,6 +89,8 @@ public sealed class RspCommandProcessor(
 
             Thread.Sleep(RunPollInterval);
 
+            // Halted deckt beides ab: Breakpoint-Treffer und Programmende. Die Hardware kann das
+            // nicht unterscheiden (H-3), beides fuehrt ueber i_svnr_running = '0' hierher.
             if (client.RequestState() is { Type: SbdpType.Status, State: SvnrState.Halted })
                 return RspResponse.TrapSignal;
         }
@@ -90,7 +110,7 @@ public sealed class RspCommandProcessor(
 
     private string SetBreakpoint(string command)
     {
-        client.AddBreakpoint(ParseWordAddress(command));
+        client.AddBreakpoint(ParseWordAddress(command)); 
         return RspResponse.Ok;
     }
 
@@ -111,7 +131,8 @@ public sealed class RspCommandProcessor(
         var registerNumber = Convert.ToInt32(assignment[0], 16);
         var value = RspHex.ParseLittleEndianWord(assignment[1]);
 
-        return GdbRegisterFile.TryWrite(client, registerNumber, value)
+        return GdbRegisterFile.
+            TryWrite(client, registerNumber, value)
             ? RspResponse.Ok
             : RspResponse.GenericError;
     }

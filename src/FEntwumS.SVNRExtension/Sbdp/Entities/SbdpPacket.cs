@@ -42,7 +42,7 @@ public readonly record struct SbdpPacket(SbdpType Type, ushort Value)
     public static SbdpPacket FromBytes(ReadOnlySpan<byte> source)
     {
         if (source.Length < SbdpConstants.PacketSize)
-            throw new ArgumentException($"Ein Rahmen braucht {SbdpConstants.PacketSize} Byte.", nameof(source));
+            throw new ArgumentException($"A frame needs exactly {SbdpConstants.PacketSize} bytes.", nameof(source));
 
         return new SbdpPacket((SbdpType)source[0], (ushort)((source[1] << 8) | source[2]));
     }

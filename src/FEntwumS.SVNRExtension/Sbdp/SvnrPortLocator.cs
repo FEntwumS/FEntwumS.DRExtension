@@ -20,8 +20,8 @@ public static class SvnrPortLocator
 
         if (candidates.Count == 0)
             throw new IOException(
-                "Keine serielle Schnittstelle gefunden. Unter Linux muss der Benutzer in der " +
-                "Gruppe 'dialout' sein, unter macOS erscheint das Board als /dev/cu.usbserial-*.");
+                "No serial port found. On Linux the user has to be in the 'dialout' group, " +
+                "on macOS the board shows up as /dev/cu.usbserial-*.");
 
         foreach (var candidate in candidates)
         {

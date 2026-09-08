@@ -36,9 +36,9 @@ public sealed class SerialSbdpTransport : ISbdpTransport
             // Der mit Abstand haeufigste Fehler unter Linux, und die Meldung des Frameworks nennt
             // die Ursache nicht.
             throw new UnauthorizedAccessException(
-                $"Kein Zugriff auf '{portName}'. Unter Linux fehlt meist die Mitgliedschaft in der " +
-                "Gruppe 'dialout' (sudo usermod -aG dialout $USER, danach neu anmelden). " +
-                "Sonst haelt ein anderer Prozess den Port offen.", e);
+                $"No access to '{portName}'. On Linux this usually means the user is not in the " +
+                "'dialout' group (sudo usermod -aG dialout $USER, then log in again). " +
+                "Otherwise another process is holding the port open.", e);
         }
 
         _port.DiscardInBuffer();

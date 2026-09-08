@@ -15,7 +15,7 @@ public static class RspHex
     public static ushort ParseLittleEndianWord(string hex)
     {
         var bytes = Convert.FromHexString(hex);
-        if (bytes.Length != 2) throw new FormatException($"'{hex}' ist kein 16-Bit-Wert.");
+        if (bytes.Length != 2) throw new FormatException($"'{hex}' is not a 16-bit value.");
 
         return (ushort)(bytes[0] | (bytes[1] << 8));
     }

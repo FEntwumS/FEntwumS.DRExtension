@@ -32,7 +32,7 @@ public sealed class RemoteStubService : IDisposable
 
     public int Start(ISbdpTransport transport, int tcpPort = 0)
     {
-        if (IsRunning) throw new InvalidOperationException("Der Stub laeuft bereits.");
+        if (IsRunning) throw new InvalidOperationException("The Remote Stub service is already running");
 
         _targetDescription = ReadTargetDescription();
         _transport = transport;
@@ -44,7 +44,7 @@ public sealed class RemoteStubService : IDisposable
         try
         {
             if (!_client.TestCommunication())
-                throw new InvalidOperationException("Am seriellen Port hat kein SVNR geantwortet.");
+                throw new InvalidOperationException("The SVNR did not answer via serial.");
 
             _client.SwitchToDebug();
             _client.DebugReset();
@@ -67,10 +67,10 @@ public sealed class RemoteStubService : IDisposable
 
     public void LoadProgram(byte[] image)
     {
-        var client = _client ?? throw new InvalidOperationException("Der Stub laeuft nicht.");
+        var client = _client ?? throw new InvalidOperationException("The stub is not running.");
 
         if (!_serialGate.TryEnter(LoadProgramLockTimeoutMilliseconds))
-            throw new InvalidOperationException("Die serielle Verbindung ist belegt.");
+            throw new InvalidOperationException("The serial connection is busy.");
 
         try
         {
@@ -231,10 +231,6 @@ public sealed class RemoteStubService : IDisposable
     private static string ReadTargetDescription()
     {
         var path = TargetDescriptionPath();
-
-        if (!File.Exists(path))
-            throw new FileNotFoundException($"Die Zielbeschreibung fehlt: {path}", path);
-
-        return File.ReadAllText(path);
+        return !File.Exists(path) ? throw new FileNotFoundException($"Target Description missing: {path}", path) : File.ReadAllText(path);
     }
 }

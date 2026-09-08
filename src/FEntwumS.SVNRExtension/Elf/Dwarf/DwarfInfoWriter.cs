@@ -33,7 +33,7 @@ internal sealed class DwarfInfoWriter
     public DwarfInfoWriter(byte pointerSize = 4)
     {
         if (pointerSize != 4) throw new ArgumentOutOfRangeException(
-            nameof(pointerSize), "Nur 32-Bit-DWARF wird unterstuetzt.");
+            nameof(pointerSize), "Only 32-bit DWARF is supported.");
         _pointerSize = pointerSize;
     }
 
@@ -113,7 +113,7 @@ internal sealed class DwarfInfoWriter
         DwForm.Data4 or DwForm.Strp or DwForm.SecOffset or DwForm.Ref4 => 4,
         DwForm.String => Encoding.UTF8.GetByteCount((string)attribute.Value!) + 1,
         DwForm.ExprLoc => ExprLocSize((byte[])attribute.Value!),
-        _ => throw new NotSupportedException($"Form {attribute.Form} wird nicht unterstuetzt."),
+        _ => throw new NotSupportedException($"Form {attribute.Form} is not supported."),
     };
 
     private static int ExprLocSize(byte[] expression) =>
@@ -157,7 +157,7 @@ internal sealed class DwarfInfoWriter
             }
 
             default:
-                throw new NotSupportedException($"Form {attribute.Form} wird nicht unterstuetzt.");
+                throw new NotSupportedException($"Form {attribute.Form} is not supported.");
         }
     }
 

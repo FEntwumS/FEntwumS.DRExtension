@@ -39,6 +39,8 @@ public sealed class SvnrBootloaderClient(ISbdpTransport transport)
     /// </remarks>
     private static readonly TimeSpan BreakpointSettleTime = TimeSpan.FromMilliseconds(1);
 
+    private readonly HashSet<ushort> _hardwareBreakpoints = [];
+
     /// <summary>
     /// Wird fuer jeden gesendeten und empfangenen Rahmen gerufen - <c>true</c> heisst zum FPGA.
     /// </summary>
@@ -127,14 +129,14 @@ public sealed class SvnrBootloaderClient(ISbdpTransport transport)
         if (image.Length != SbdpConstants.ImageSize)
         {
             throw new ArgumentException(
-                $"Das Abbild muss genau {SbdpConstants.ImageSize} Byte gross sein ({SbdpConstants.RamSize} Worte), " +
-                $"ist aber {image.Length} Byte. Ein zu kurzes Abbild quittiert die Hardware mit " +
-                "RamNotFull, ein zu langes mit RamOverflow.", nameof(image));
+                $"The image must be exactly {SbdpConstants.ImageSize} bytes ({SbdpConstants.RamSize} words), " +
+                $"but is {image.Length} bytes. The hardware answers RamNotFull to a short image " +
+                "and RamOverflow to a long one.", nameof(image));
         }
 
         // Aus DebugInit muss erst zurueck nach PowerOn geschaltet werden - der Bootloader laeuft
         // nicht im Debug-Zweig der FSM.
-        var state = RequireState("Vor dem Laden", SvnrState.PowerOn, SvnrState.DebugInit);
+        var state = RequireState("Before the upload", SvnrState.PowerOn, SvnrState.DebugInit);
         if (state == SvnrState.DebugInit) SwitchToPowerOn();
 
         Send(SbdpPacket.Command(SvnrCommand.SendProgram));
@@ -156,8 +158,8 @@ public sealed class SvnrBootloaderClient(ISbdpTransport transport)
         // Der dokumentierte Handshake braucht zwei Abfragen (H-5): erst meldet der Decoder, dass
         // sein Puffer voll ist, und erst nach dem Umkopieren durch den Runner steht wieder
         // PowerOn. Die zweite Abfrage wegzulassen laesst die FSM im Kopiervorgang stehen.
-        RequireState("Nach dem Laden", SvnrState.RamFullOk);
-        RequireState("Nach dem Umkopieren", SvnrState.PowerOn);
+        RequireState("After the upload", SvnrState.RamFullOk);
+        RequireState("After copying into RAM", SvnrState.PowerOn);
     }
 
     // ---- Normalbetrieb ----------------------------------------------------
@@ -165,18 +167,18 @@ public sealed class SvnrBootloaderClient(ISbdpTransport transport)
     /// <summary>Startet das geladene Programm ausserhalb des Debug-Modus.</summary>
     public void RunNormal()
     {
-        var state = RequireState("Vor dem Start", SvnrState.PowerOn, SvnrState.DebugInit);
+        var state = RequireState("Before the run", SvnrState.PowerOn, SvnrState.DebugInit);
         if (state == SvnrState.DebugInit) SwitchToPowerOn();
 
         Send(SbdpPacket.Command(SvnrCommand.Execute));
-        RequireState("Nach dem Start", SvnrState.Running);
+        RequireState("After the run started", SvnrState.Running);
     }
 
     /// <summary>Setzt einen laufenden SVNR zurueck.</summary>
     public void ResetNormal()
     {
         Send(SbdpPacket.Command(SvnrCommand.Reset));
-        RequireState("Nach dem Ruecksetzen", SvnrState.PowerOn);
+        RequireState("After the reset", SvnrState.PowerOn);
     }
 
     // ---- Betriebsart ------------------------------------------------------
@@ -184,7 +186,7 @@ public sealed class SvnrBootloaderClient(ISbdpTransport transport)
     public void SwitchToDebug()
     {
         Send(SbdpPacket.Command(SvnrCommand.SwitchDebug));
-        RequireState("Umschalten in den Debug-Modus", SvnrState.DebugInit);
+        RequireState("Switching to debug mode", SvnrState.DebugInit);
     }
 
     /// <summary>Setzt den SVNR zurueck, ohne den Debug-Modus zu verlassen.</summary>
@@ -198,60 +200,52 @@ public sealed class SvnrBootloaderClient(ISbdpTransport transport)
         Send(SbdpPacket.Command(SvnrCommand.Reset));
 
         if (RequestState() is null)
-            throw new SbdpException("Ruecksetzen im Debug-Modus: keine Antwort.");
+            throw new SbdpException("Reset in debug mode: no answer.");
+
+        ClearBootloaderBreakpointRegister();
+    }
+
+    // Loescht jeden Breakpoint, den dieser Client gesetzt hat. Die Tabelle selbst laesst sich
+    // nicht auslesen (H-8), der Spiegel ist die einzige Quelle darueber, was drinsteht.
+    private void ClearBootloaderBreakpointRegister()
+    {
+        foreach (var address in _hardwareBreakpoints.ToArray())
+        {
+            try
+            {
+                RemoveBreakpoint(address);
+            }
+            catch (SbdpException exception) when (exception.Received is not null)
+            {
+                _hardwareBreakpoints.Remove(address);
+                return;
+            }
+        }
     }
 
     public void SwitchToPowerOn()
     {
         Send(SbdpPacket.Command(SvnrCommand.SwitchPowerOn));
-        RequireState("Umschalten in den Normalbetrieb", SvnrState.PowerOn);
+        RequireState("Switching to normal mode", SvnrState.PowerOn);
     }
 
     // ---- Ablaufsteuerung im Debug-Modus -----------------------------------
 
     /// <summary>Startet den Lauf im Debug-Modus, ohne auf sein Ende zu warten.</summary>
     /// <remarks>
-    /// Kein <see cref="RequireState" /> danach: Der Aufrufer entscheidet, ob er pollt
-    /// (<see cref="WaitForHalt" />) oder anhaelt.
+    /// Kein <see cref="RequireState" /> danach: Der Aufrufer entscheidet, ob er pollt oder
+    /// anhaelt. Siehe <see cref="FEntwumS.SVNRExtension.Rsp.RspCommandProcessor" /> fuer den
+    /// Poll-Weg.
     /// </remarks>
     public void DebugRun()
     {
         Send(SbdpPacket.Command(SvnrCommand.Execute));
     }
 
-    /// <summary>
-    /// Pollt, bis der SVNR haelt.
-    /// </summary>
-    /// <remarks>
-    /// Pollen ist Pflicht, kein Notbehelf: <c>decoder.vhd</c> setzt <c>o_tx_trig</c> nur in
-    /// Zweigen, die durch ein empfangenes Paket bewacht sind - ein Breakpoint-Treffer meldet sich
-    /// also nie von selbst. Waehrend <c>z_DEBUG_RUNNING</c> nimmt die Hardware ausserdem nur
-    /// <see cref="SvnrCommand.RequestState" /> und <see cref="SvnrCommand.Halt" /> an.
-    /// <para>
-    /// Ohne gesetzten Breakpoint kehrt der Aufruf nie zurueck - dann bleibt nur
-    /// <see cref="Halt" /> ueber <paramref name="cancellationToken" />.
-    /// </para>
-    /// </remarks>
-    public SvnrState WaitForHalt(TimeSpan pollInterval, CancellationToken cancellationToken = default)
-    {
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            Thread.Sleep(pollInterval);
-
-            var received = RequestState();
-            if (received is not { Type: SbdpType.Status } packet) continue;
-
-            // Halted deckt beides ab: Breakpoint-Treffer und Programmende. Die Hardware kann das
-            // nicht unterscheiden (H-3), beides fuehrt ueber i_svnr_running = '0' hierher.
-            if (packet.State == SvnrState.Halted) return packet.State;
-        }
-    }
-
     public void Halt()
     {
         Send(SbdpPacket.Command(SvnrCommand.Halt));
-        RequireState("Nach dem Anhalten", SvnrState.Halted);
+        RequireState("After the halt", SvnrState.Halted);
     }
 
     /// <summary>Fuehrt einen Einzelschritt aus.</summary>
@@ -263,7 +257,7 @@ public sealed class SvnrBootloaderClient(ISbdpTransport transport)
     {
         Send(SbdpPacket.Command(SvnrCommand.Step));
         Thread.Sleep(StepSettleTime);
-        RequireState("Nach dem Einzelschritt", SvnrState.Halted);
+        RequireState("After the single step", SvnrState.Halted);
     }
 
     // ---- Breakpoints ------------------------------------------------------
@@ -285,7 +279,9 @@ public sealed class SvnrBootloaderClient(ISbdpTransport transport)
         // decke das Rennen mit i_bp_edit_done zu, hat sich nicht gehalten -> wie beim
         // Einzelschritt erst warten, dann fragen.
         Thread.Sleep(BreakpointSettleTime);
-        RequireState($"Breakpoint bei 0x{address:x3} setzen", SvnrState.BreakpointAdded);
+
+        _hardwareBreakpoints.Add(address);
+        RequireState($"Setting breakpoint at 0x{address:x3}", SvnrState.BreakpointAdded);
     }
 
     public void RemoveBreakpoint(ushort address)
@@ -295,7 +291,8 @@ public sealed class SvnrBootloaderClient(ISbdpTransport transport)
 
         // Dasselbe Rennen wie beim Setzen, nur ueber z_DELETING_BP (decoder.vhd:451-463).
         Thread.Sleep(BreakpointSettleTime);
-        RequireState($"Breakpoint bei 0x{address:x3} loeschen", SvnrState.BreakpointDeleted);
+        RequireState($"Removing breakpoint at 0x{address:x3}", SvnrState.BreakpointDeleted);
+        _hardwareBreakpoints.Remove(address);
     }
 
     // ---- Speicher ---------------------------------------------------------
@@ -372,7 +369,7 @@ public sealed class SvnrBootloaderClient(ISbdpTransport transport)
     {
         if (address >= SbdpConstants.RamSize)
             throw new ArgumentOutOfRangeException(nameof(address),
-                $"Der SVNR hat {SbdpConstants.RamSize} Worte, 0x{address:x4} liegt ausserhalb.");
+                $"The SVNR has {SbdpConstants.RamSize} words, 0x{address:x4} is outside that range.");
     }
 
     private void Send(SbdpPacket packet)

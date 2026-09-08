@@ -20,7 +20,7 @@ internal static class DebugArangesWriter
     public static byte[] Write(uint highPc, byte pointerSize = 4)
     {
         if (pointerSize != 4) throw new ArgumentOutOfRangeException(
-            nameof(pointerSize), "Nur 32-Bit-DWARF wird unterstuetzt.");
+            nameof(pointerSize), "Only 32-bit DWARF is supported.");
 
         using var stream = new MemoryStream();
 

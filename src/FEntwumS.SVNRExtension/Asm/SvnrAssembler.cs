@@ -10,6 +10,13 @@ public static partial class SvnrAssembler
 {
     private const string SuppressGapWarningDirective = "@FreeLines";
 
+    private const string AddressPattern = @"(?<address>[0-9A-Fa-f]{1,4})";
+    private const string InstructionPattern = @"(?<opcode>[A-Za-z]{2,4})\s*(?<operand>[0-9A-Fa-f]{2})";
+    private const string DataPattern = @"(?<data>[0-9A-Fa-f]{4})";
+    private const string CommentPattern = @"(?:[;#]\s*(?<comment>.*))?";
+    private const char CommentSymbol = '#';
+    private const char AlternativeCommentSymbol = ';';
+
     public static SvnrProgram Assemble(TextReader source)
     {
         var words = new ushort[SbdpConstants.RamSize];
@@ -25,7 +32,7 @@ public static partial class SvnrAssembler
             sourceLine++;
 
             var line = rawLine.Trim();
-            if (line.Length == 0 || line[0] == '#' || line[0] == ';') continue; // Reine Kommentarzeilen nicht verarbeiten
+            if (line.Length == 0 || line[0] == CommentSymbol || line[0] == AlternativeCommentSymbol) continue; // Reine Kommentarzeilen nicht verarbeiten
 
             if (line.Equals(SuppressGapWarningDirective, StringComparison.OrdinalIgnoreCase))
             {
@@ -37,16 +44,16 @@ public static partial class SvnrAssembler
 
             if (instruction.WordAddress < nextFreeAddress)
                 throw new AssemblyException(sourceLine,
-                    $"Adresse 0x{instruction.WordAddress:x4} folgt auf 0x{nextFreeAddress - 1:x4}.");
+                    $"Address 0x{instruction.WordAddress:x4} comes after 0x{nextFreeAddress - 1:x4}.");
 
             if (instruction.WordAddress >= SbdpConstants.RamSize)
                 throw new AssemblyException(sourceLine,
-                    $"Adresse 0x{instruction.WordAddress:x4} liegt ausserhalb von {SbdpConstants.RamSize} Worten.");
+                    $"Address 0x{instruction.WordAddress:x4} is outside the {SbdpConstants.RamSize} words of RAM.");
 
             if (instruction.WordAddress > nextFreeAddress && !gapWarningSuppressed)
                 diagnostics.Add(new AssemblyDiagnostic(AssemblySeverity.Warning, sourceLine,
-                    $"Adressen 0x{nextFreeAddress:x4} bis 0x{instruction.WordAddress - 1:x4} bleiben leer. " +
-                    $"'{SuppressGapWarningDirective}' in der Zeile davor unterdrueckt diese Meldung."));
+                    $"Addresses 0x{nextFreeAddress:x4} to 0x{instruction.WordAddress - 1:x4} stay empty. " +
+                    $"'{SuppressGapWarningDirective}' on the line before suppresses this message."));
 
             words[instruction.WordAddress] = instruction.Value;
             instructions.Add(instruction);
@@ -61,7 +68,7 @@ public static partial class SvnrAssembler
     private static AssembledInstruction ParseLine(string line, int sourceLine)
     {
         var match = LinePattern().Match(line);
-        if (!match.Success) throw new AssemblyException(sourceLine, $"Unlesbare Zeile: '{line}'.");
+        if (!match.Success) throw new AssemblyException(sourceLine, $"Unreadable Line: '{line}'.");
 
         var address = Convert.ToUInt16(match.Groups["address"].Value, 16);
         var comment = match.Groups["comment"].Success ? match.Groups["comment"].Value : string.Empty;
@@ -74,7 +81,7 @@ public static partial class SvnrAssembler
 
         var mnemonic = match.Groups["opcode"].Value.ToUpperInvariant();
         if (!SvnrInstructionSet.TryGetOpcode(mnemonic, out var opcode))
-            throw new AssemblyException(sourceLine, $"Unbekannter Befehl: '{mnemonic}'.");
+            throw new AssemblyException(sourceLine, $"Unknown Instruction: '{mnemonic}'.");
 
         var operand = Convert.ToByte(match.Groups["operand"].Value, 16);
 
@@ -95,6 +102,14 @@ public static partial class SvnrAssembler
     // sind die einzigen Mnemoniken, die ausschliesslich aus Hexbuchstaben bestehen.
     
     //https://regex101.com/r/zJlScb/1
-    [GeneratedRegex(@"^(?<address>[0-9A-Fa-f]{1,4}):\s*(?:(?<data>[0-9A-Fa-f]{4})|(?<opcode>[A-Za-z]{2,4})\s*(?<operand>[0-9A-Fa-f]{2}))\s*(?:[;#]\s*(?<comment>.*))?$")]
+    [GeneratedRegex($@"^{AddressPattern}:\s*(?:{DataPattern}|{InstructionPattern})\s*{CommentPattern}$")]
     private static partial Regex LinePattern();
+
+    // Fuer die Randspalte: nur Befehlszeilen sollen einen Breakpoint annehmen, Datenwoerter
+    // nicht - die Hardware haelt ohnehin nur auf Adressen mit einem Befehl. Der Ausschluss
+    // steht als Lookahead statt als Alternation, weil "erst pruefen, ob es ein Datenwort waere"
+    // dieselbe Reihenfolge braucht wie LinePattern - sonst verschluckt InstructionPattern hier
+    // dasselbe Datenwort wie oben.
+    public const string InstructionLinePattern =
+        $@"^\s*{AddressPattern}:\s*(?!{DataPattern}\s*{CommentPattern}$){InstructionPattern}\s*{CommentPattern}$";
 }

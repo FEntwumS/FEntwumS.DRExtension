@@ -54,7 +54,7 @@ public sealed class SvnrDebugTargetPreparer : IDebugTargetPreparer
     {
         if (ActiveProject is not { } project) // Checken ob man in einem FPGA Projekt ist. 
         {
-            _outputService.WriteLine("Kein FPGA-Projekt aktiv.", Brushes.Red);
+            _outputService.WriteLine("No FPGA project is active.", Brushes.Red);
             return null;
         }
 
@@ -98,10 +98,10 @@ public sealed class SvnrDebugTargetPreparer : IDebugTargetPreparer
             _stubService.Fault = message => _outputService.WriteLine(message, Brushes.Yellow);
 
             var port = _stubService.Start(transport, configuredPort);
-            _outputService.WriteLine($"Stub laeuft auf localhost:{port}.");
+            _outputService.WriteLine($"Stub listening on localhost:{port}.");
 
 
-            _outputService.WriteLine("Lade das Programm auf den SVNR...");
+            _outputService.WriteLine("Uploading the program to the SVNR...");
             _stubService.LoadProgram(await File.ReadAllBytesAsync(artifacts.BinaryPath));
 
             var endpoint = $"localhost:{port}";
@@ -119,8 +119,8 @@ public sealed class SvnrDebugTargetPreparer : IDebugTargetPreparer
         {
             // Der haeufigste Fall bei fest eingetragenem Port: ihn haelt schon jemand - eine
             // vorige Sitzung, die noch nicht aufgeraeumt hat, oder ein fremdes Programm.
-            var subject = configuredPort == 0 ? "Kein freier Port" : $"Port {configuredPort}";
-            _outputService.WriteLine($"{subject} laesst sich nicht belegen: {exception.Message}", Brushes.Red);
+            var subject = configuredPort == 0 ? "No free port" : $"Port {configuredPort}";
+            _outputService.WriteLine($"{subject} could not be claimed: {exception.Message}", Brushes.Red);
             _logger.Error(exception.Message, exception);
             return null;
         }
@@ -128,7 +128,7 @@ public sealed class SvnrDebugTargetPreparer : IDebugTargetPreparer
         {
             // Aufgeraeumt wird nicht hier: Der Kern ruft CleanupAsync, sobald die Vorbereitung
             // ohne Sitzung endet. Das ist derselbe Weg wie beim regulaeren Sitzungsende.
-            _outputService.WriteLine($"Debug-Start fehlgeschlagen: {exception.Message}", Brushes.Red);
+            _outputService.WriteLine($"Debug start failed: {exception.Message}", Brushes.Red);
             _logger.Error(exception.Message, exception);
             return null;
         }
@@ -150,7 +150,7 @@ public sealed class SvnrDebugTargetPreparer : IDebugTargetPreparer
         if (!int.TryParse(portText, out port) || port is < 0 or > 65535)
         {
             port = 0;
-            rejection = $"Ungültiger Port: {portText}";
+            rejection = $"Invalid port: {portText}";
             return false;
         }
 
@@ -158,7 +158,7 @@ public sealed class SvnrDebugTargetPreparer : IDebugTargetPreparer
             return true;
 
         port = 0;
-        rejection = $"Ungültiger Host: {host}";
+        rejection = $"Invalid host: {host}";
         return false;
     }
 
@@ -178,7 +178,7 @@ public sealed class SvnrDebugTargetPreparer : IDebugTargetPreparer
         if (!_stubService.IsRunning) return Task.CompletedTask;
 
         _stubService.Stop();
-        _outputService.WriteLine("Stub beendet, serielle Verbindung freigegeben.");
+        _outputService.WriteLine("Stub stopped, serial connection released.");
 
         return Task.CompletedTask;
     }
@@ -196,8 +196,9 @@ public sealed class SvnrDebugTargetPreparer : IDebugTargetPreparer
     {
         return
         [
-            "set architecture m68k", // Für Motorola 
+            "set architecture m68k", // Für Motorola
             $"set tdesc filename {NormalizePath(RemoteStubService.TargetDescriptionPath())}",
+            "set breakpoint always-inserted on"
         ];
     }
     

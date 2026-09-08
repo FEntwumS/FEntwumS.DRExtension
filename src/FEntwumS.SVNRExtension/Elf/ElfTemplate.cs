@@ -36,7 +36,7 @@ internal sealed class ElfTemplate
 
     public ElfSection this[string name] => Sections.TryGetValue(name, out var section)
         ? section
-        : throw new KeyNotFoundException($"Section '{name}' fehlt im Template.");
+        : throw new KeyNotFoundException($"Section '{name}' is missing from the template.");
 
     /// <summary>Laedt das Template und prueft, dass alle benoetigten Sektionen vorhanden sind.</summary>
     public static ElfTemplate Load(string path, IEnumerable<string> requiredSections)
@@ -54,7 +54,7 @@ internal sealed class ElfTemplate
         if (shentsize != SectionHeaderSize)
         {
             throw new InvalidDataException(
-                $"{path}: unerwartete Section-Header-Groesse {shentsize}, erwartet {SectionHeaderSize}.");
+                $"{path}: unexpected section header size {shentsize}, expected {SectionHeaderSize}.");
         }
 
         var nameTable = ReadSectionData(bytes, shoff, shstrndx);
@@ -75,7 +75,7 @@ internal sealed class ElfTemplate
         {
             if (!sections.ContainsKey(required))
             {
-                throw new InvalidDataException($"{path}: Section '{required}' fehlt.");
+                throw new InvalidDataException($"{path}: section '{required}' is missing.");
             }
         }
 
@@ -87,11 +87,11 @@ internal sealed class ElfTemplate
         if (bytes.Length < ElfHeaderSize
             || bytes[0] != 0x7f || bytes[1] != (byte)'E' || bytes[2] != (byte)'L' || bytes[3] != (byte)'F')
         {
-            throw new InvalidDataException($"{path}: keine ELF-Datei.");
+            throw new InvalidDataException($"{path}: not an ELF file.");
         }
 
-        if (bytes[4] != 1) throw new InvalidDataException($"{path}: kein ELF32.");
-        if (bytes[5] != 1) throw new InvalidDataException($"{path}: kein Little Endian.");
+        if (bytes[4] != 1) throw new InvalidDataException($"{path}: not ELF32.");
+        if (bytes[5] != 1) throw new InvalidDataException($"{path}: not little endian.");
     }
 
     private static byte[] ReadSectionData(byte[] bytes, uint shoff, int index)

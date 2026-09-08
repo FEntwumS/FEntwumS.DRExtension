@@ -20,7 +20,7 @@ public sealed class SbdpException(string message, SbdpPacket? received = null) :
 
     internal static SbdpException Unexpected(string operation, SbdpPacket? received, string expected)
     {
-        var actual = received is { } packet ? packet.ToString() : "nichts (Zeitueberschreitung)";
-        return new SbdpException($"{operation}: erwartet {expected}, empfangen {actual}.", received);
+        var actual = received is { } packet ? packet.ToString() : "nothing (timeout)";
+        return new SbdpException($"{operation}: expected {expected}, received {actual}.", received);
     }
 }

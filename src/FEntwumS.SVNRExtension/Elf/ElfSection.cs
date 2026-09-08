@@ -17,7 +17,7 @@ internal sealed class ElfSection
         if (header.Length != ElfTemplate.SectionHeaderSize)
         {
             throw new ArgumentException(
-                $"Section-Header muss {ElfTemplate.SectionHeaderSize} Byte gross sein.", nameof(header));
+                $"A section header must be exactly {ElfTemplate.SectionHeaderSize} bytes.", nameof(header));
         }
     }
 

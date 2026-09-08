@@ -92,8 +92,8 @@ public class FEntwumsSvnrExtensionModule : OneWareModuleBase
                 {
                     l.Add(new MenuItemModel("RegisterAsm")
                     {
-                        Header = "Use this file to Compile",
-                        Command = new AsyncRelayCommand(() => SvnrSettingsHelper.UpdateProjectAsmFile(file)), // h
+                        Header = "Use this file to assemble",
+                        Command = new AsyncRelayCommand(() => SvnrSettingsHelper.UpdateProjectAsmFile(file)),
                     });
                 }
             }
